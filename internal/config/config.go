@@ -10,15 +10,15 @@ import (
 
 // Config holds all application configuration.
 type Config struct {
-	Router         RouterConfig `yaml:"router"`
-	Interfaces     []string     `yaml:"interfaces"`
-	PollInterval   Duration     `yaml:"poll_interval"`
-	RingBufferSize int          `yaml:"ring_buffer_size"`
-	ListenAddr     string       `yaml:"listen_addr"`
+	Devices        []DeviceConfig `yaml:"devices"`
+	PollInterval   Duration       `yaml:"poll_interval"`
+	RingBufferSize int            `yaml:"ring_buffer_size"`
+	ListenAddr     string         `yaml:"listen_addr"`
 }
 
-// RouterConfig holds SNMP connection settings for the Mikrotik router.
-type RouterConfig struct {
+// DeviceConfig holds connection settings for a single Mikrotik device.
+type DeviceConfig struct {
+	Name     string `yaml:"name"`
 	Host     string `yaml:"host"`
 	Port     uint16 `yaml:"port"`
 	Username string `yaml:"username"`
@@ -58,7 +58,6 @@ func Load(path string) (*Config, error) {
 	}
 
 	cfg := &Config{
-		Router:         RouterConfig{Port: 161},
 		PollInterval:   Duration(5 * time.Second),
 		RingBufferSize: 240,
 		ListenAddr:     ":8080",
@@ -68,15 +67,31 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
 
-	if cfg.Router.Host == "" {
-		return nil, fmt.Errorf("router.host is required")
+	if len(cfg.Devices) == 0 {
+		return nil, fmt.Errorf("at least one device must be configured")
 	}
-	if cfg.Router.Username == "" {
-		return nil, fmt.Errorf("router.username is required")
+
+	names := make(map[string]bool)
+	for i, dev := range cfg.Devices {
+		if dev.Host == "" {
+			return nil, fmt.Errorf("devices[%d].host is required", i)
+		}
+		if dev.Username == "" {
+			return nil, fmt.Errorf("devices[%d].username is required", i)
+		}
+		if dev.Name == "" {
+			cfg.Devices[i].Name = dev.Host
+		}
+		if dev.Port == 0 {
+			cfg.Devices[i].Port = 161
+		}
+		name := cfg.Devices[i].Name
+		if names[name] {
+			return nil, fmt.Errorf("duplicate device name %q", name)
+		}
+		names[name] = true
 	}
-	if len(cfg.Interfaces) == 0 {
-		return nil, fmt.Errorf("at least one interface must be configured")
-	}
+
 	if cfg.RingBufferSize < 1 {
 		return nil, fmt.Errorf("ring_buffer_size must be >= 1")
 	}

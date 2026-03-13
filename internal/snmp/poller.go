@@ -17,8 +17,9 @@ const (
 	oidIfHCOutOctets = ".1.3.6.1.2.1.31.1.1.1.10"
 )
 
-// Config holds SNMP connection settings.
+// Config holds SNMP connection settings for a single device.
 type Config struct {
+	Name         string
 	Host         string
 	Port         uint16
 	Username     string
@@ -29,6 +30,7 @@ type Config struct {
 
 // InterfaceSample is emitted after each poll for a specific interface.
 type InterfaceSample struct {
+	Device    string
 	Interface string
 	Sample    ringbuf.Sample
 }
@@ -47,7 +49,7 @@ type ifState struct {
 	hasBaseline bool
 }
 
-// Poller polls SNMP counters for multiple interfaces.
+// Poller polls SNMP counters for all interfaces on a single device.
 type Poller struct {
 	cfg        Config
 	client     *gosnmp.GoSNMP
@@ -55,9 +57,9 @@ type Poller struct {
 	interfaces []*ifState
 }
 
-// NewPoller creates and connects an SNMP poller for the given interfaces.
-// Each interface gets its own ring buffer from the provided map.
-func NewPoller(cfg Config, buffers map[string]*ringbuf.RingBuffer, onSample OnSample) (*Poller, error) {
+// NewPoller creates and connects an SNMP poller for a device.
+// It auto-discovers all interfaces and creates ring buffers for each.
+func NewPoller(cfg Config, bufSize int, onSample OnSample) (*Poller, []*DiscoveredInterface, error) {
 	client := &gosnmp.GoSNMP{
 		Target:        cfg.Host,
 		Port:          cfg.Port,
@@ -75,36 +77,44 @@ func NewPoller(cfg Config, buffers map[string]*ringbuf.RingBuffer, onSample OnSa
 	}
 
 	if err := client.Connect(); err != nil {
-		return nil, fmt.Errorf("snmp connect: %w", err)
+		return nil, nil, fmt.Errorf("snmp connect %s: %w", cfg.Name, err)
 	}
 
 	p := &Poller{cfg: cfg, client: client, onSample: onSample}
 
-	// Build ifIndex map from SNMP walk
 	ifIndexMap, err := p.walkInterfaces()
 	if err != nil {
 		client.Conn.Close()
-		return nil, err
+		return nil, nil, err
 	}
 
-	for name, buf := range buffers {
-		idx, ok := ifIndexMap[strings.ToLower(name)]
-		if !ok {
-			client.Conn.Close()
-			return nil, fmt.Errorf("interface %q not found via SNMP", name)
-		}
+	var discovered []*DiscoveredInterface
+	for name, idx := range ifIndexMap {
+		buf := ringbuf.New(bufSize)
 		p.interfaces = append(p.interfaces, &ifState{
 			name:    name,
 			ifIndex: idx,
 			buf:     buf,
 		})
-		log.Printf("resolved interface %q to ifIndex %d", name, idx)
+		discovered = append(discovered, &DiscoveredInterface{
+			Name:    name,
+			IfIndex: idx,
+			Buffer:  buf,
+		})
+		log.Printf("[%s] discovered interface %q (ifIndex %d)", cfg.Name, name, idx)
 	}
 
-	return p, nil
+	return p, discovered, nil
 }
 
-// walkInterfaces returns a map of lowercase interface name → ifIndex.
+// DiscoveredInterface holds info about an auto-discovered interface.
+type DiscoveredInterface struct {
+	Name    string
+	IfIndex int
+	Buffer  *ringbuf.RingBuffer
+}
+
+// walkInterfaces returns a map of lowercase interface name -> ifIndex.
 func (p *Poller) walkInterfaces() (map[string]int, error) {
 	result := make(map[string]int)
 	err := p.client.Walk(oidIfDescr, func(pdu gosnmp.SnmpPDU) error {
@@ -123,7 +133,7 @@ func (p *Poller) walkInterfaces() (map[string]int, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("walk ifDescr: %w", err)
+		return nil, fmt.Errorf("walk ifDescr on %s: %w", p.cfg.Name, err)
 	}
 	return result, nil
 }
@@ -131,7 +141,6 @@ func (p *Poller) walkInterfaces() (map[string]int, error) {
 func (p *Poller) poll() {
 	now := time.Now()
 
-	// Build OID list for all interfaces
 	var oids []string
 	for _, iface := range p.interfaces {
 		oids = append(oids,
@@ -142,17 +151,15 @@ func (p *Poller) poll() {
 
 	result, err := p.client.Get(oids)
 	if err != nil {
-		log.Printf("snmp get: %v", err)
+		log.Printf("[%s] snmp get: %v", p.cfg.Name, err)
 		return
 	}
 
-	// Parse results into a map of OID → value
 	values := make(map[string]uint64, len(result.Variables))
 	for _, v := range result.Variables {
 		values[v.Name] = gosnmp.ToBigInt(v.Value).Uint64()
 	}
 
-	// Process each interface
 	for _, iface := range p.interfaces {
 		inOID := fmt.Sprintf("%s.%d", oidIfHCInOctets, iface.ifIndex)
 		outOID := fmt.Sprintf("%s.%d", oidIfHCOutOctets, iface.ifIndex)
@@ -171,7 +178,7 @@ func (p *Poller) poll() {
 				}
 				iface.buf.Push(s)
 				if p.onSample != nil {
-					p.onSample(InterfaceSample{Interface: iface.name, Sample: s})
+					p.onSample(InterfaceSample{Device: p.cfg.Name, Interface: iface.name, Sample: s})
 				}
 			}
 		}

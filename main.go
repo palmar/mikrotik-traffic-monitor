@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sort"
 	"syscall"
 
 	"github.com/palmar/mikrotik-traffic-monitor/internal/config"
@@ -23,30 +24,43 @@ func main() {
 		log.Fatalf("config: %v", err)
 	}
 
-	// Create a ring buffer per interface
-	buffers := make(map[string]*ringbuf.RingBuffer, len(cfg.Interfaces))
-	for _, iface := range cfg.Interfaces {
-		buffers[iface] = ringbuf.New(cfg.RingBufferSize)
-	}
-
-	srv := server.New(buffers, cfg.Interfaces)
-
-	snmpCfg := snmp.Config{
-		Host:         cfg.Router.Host,
-		Port:         cfg.Router.Port,
-		Username:     cfg.Router.Username,
-		AuthPass:     cfg.Router.AuthPass,
-		PrivPass:     cfg.Router.PrivPass,
-		PollInterval: cfg.PollInterval.Duration(),
-	}
-
-	poller, err := snmp.NewPoller(snmpCfg, buffers, srv.Broadcast)
-	if err != nil {
-		log.Fatalf("failed to create poller: %v", err)
-	}
-
+	srv := server.New()
 	done := make(chan struct{})
-	go poller.Run(done)
+	var pollers []*snmp.Poller
+
+	for _, dev := range cfg.Devices {
+		snmpCfg := snmp.Config{
+			Name:         dev.Name,
+			Host:         dev.Host,
+			Port:         dev.Port,
+			Username:     dev.Username,
+			AuthPass:     dev.AuthPass,
+			PrivPass:     dev.PrivPass,
+			PollInterval: cfg.PollInterval.Duration(),
+		}
+
+		poller, discovered, err := snmp.NewPoller(snmpCfg, cfg.RingBufferSize, srv.Broadcast)
+		if err != nil {
+			log.Fatalf("failed to create poller for %s: %v", dev.Name, err)
+		}
+
+		// Collect interface names and buffers for server registration
+		var ifaceNames []string
+		buffers := make(map[string]*ringbuf.RingBuffer)
+		for _, di := range discovered {
+			ifaceNames = append(ifaceNames, di.Name)
+			buffers[server.BufKey(dev.Name, di.Name)] = di.Buffer
+		}
+		sort.Strings(ifaceNames)
+
+		srv.RegisterDevice(dev.Name, ifaceNames, buffers)
+		pollers = append(pollers, poller)
+		log.Printf("device %q: %d interfaces discovered", dev.Name, len(discovered))
+	}
+
+	for _, p := range pollers {
+		go p.Run(done)
+	}
 
 	httpSrv := &http.Server{
 		Addr:    cfg.ListenAddr,
@@ -54,7 +68,7 @@ func main() {
 	}
 
 	go func() {
-		log.Printf("listening on %s (interfaces: %v)", cfg.ListenAddr, cfg.Interfaces)
+		log.Printf("listening on %s (%d devices)", cfg.ListenAddr, len(cfg.Devices))
 		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("http: %v", err)
 		}

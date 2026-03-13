@@ -1,11 +1,14 @@
 # Mikrotik Traffic Monitor
 
-Real-time web dashboard for monitoring network interface traffic on Mikrotik routers via SNMPv3. Supports multiple interfaces with a clean, dark-themed UI.
+Real-time web dashboard for monitoring network interface traffic on Mikrotik routers via SNMPv3. Supports multiple devices with automatic interface discovery and a clean, dark-themed UI.
 
 ## Features
 
+- **Multi-device monitoring** — configure any number of Mikrotik routers, each polled independently
+- **Interface auto-discovery** — interfaces are discovered via SNMP, no manual listing required
+- **Interface selector** — pick which interfaces to display from a dropdown in the UI (persisted in localStorage)
 - **SNMPv3 polling** — reads 64-bit counters (`ifHCInOctets` / `ifHCOutOctets`) for accurate high-speed interface stats
-- **Multi-interface monitoring** — configure any number of router interfaces, each shown in a tabbed view
+- **Unified single-page layout** — all selected interfaces displayed on one page, grouped by device
 - **Real-time updates** — Server-Sent Events push data to the browser with no polling or page reloads
 - **Rolling time-series chart** — powered by uPlot, with configurable history depth
 - **Peak and average indicators** — per-interface throughput statistics
@@ -43,21 +46,22 @@ The dashboard will be available at `http://localhost:8080` (or whatever `listen_
 All settings live in a single YAML file. Copy `config.yaml.example` to `config.yaml` and adjust:
 
 ```yaml
-# SNMP connection to the Mikrotik router
-router:
-  host: "192.168.88.1"       # Router IP or hostname
-  port: 161                   # SNMP port (default: 161)
-  username: "monitor"         # SNMPv3 username
-  auth_pass: "your-auth-password"  # SNMPv3 authentication passphrase (SHA)
-  priv_pass: "your-priv-password"  # SNMPv3 privacy passphrase (AES)
+# Define your Mikrotik devices
+devices:
+  - name: "router-1"
+    host: "192.168.88.1"
+    port: 161
+    username: "monitor"
+    auth_pass: "your-auth-password"
+    priv_pass: "your-priv-password"
 
-# Interfaces to monitor — use Mikrotik interface names
-interfaces:
-  - ether1
-  - sfp-sfpplus1
+  - name: "router-2"
+    host: "10.0.0.1"
+    username: "monitor"
+    auth_pass: "your-auth-password"
+    priv_pass: "your-priv-password"
 
 # Polling frequency (Go duration string: "1s", "5s", "10s", etc.)
-# Lower values give more granular data but increase SNMP load on the router.
 poll_interval: "5s"
 
 # Number of data points kept per interface.
@@ -68,16 +72,18 @@ ring_buffer_size: 240
 listen_addr: ":8080"
 ```
 
+Interfaces are **auto-discovered** — the monitor queries each device for its interfaces via SNMP and presents them in the UI for the user to select which ones to monitor.
+
 ### Configuration Reference
 
 | Field | Required | Default | Description |
 |---|---|---|---|
-| `router.host` | Yes | — | Router IP address or hostname |
-| `router.port` | No | `161` | SNMP UDP port |
-| `router.username` | Yes | — | SNMPv3 username |
-| `router.auth_pass` | No | — | SNMPv3 auth passphrase (SHA) |
-| `router.priv_pass` | No | — | SNMPv3 privacy passphrase (AES) |
-| `interfaces` | Yes | — | List of Mikrotik interface names to monitor |
+| `devices[].name` | No | `host` | Display name for the device |
+| `devices[].host` | Yes | — | Router IP address or hostname |
+| `devices[].port` | No | `161` | SNMP UDP port |
+| `devices[].username` | Yes | — | SNMPv3 username |
+| `devices[].auth_pass` | No | — | SNMPv3 auth passphrase (SHA) |
+| `devices[].priv_pass` | No | — | SNMPv3 privacy passphrase (AES) |
 | `poll_interval` | No | `5s` | How often to read SNMP counters |
 | `ring_buffer_size` | No | `240` | Data points to retain per interface |
 | `listen_addr` | No | `:8080` | `host:port` the HTTP server binds to |
@@ -100,16 +106,6 @@ Create an SNMPv3 user with authentication and privacy:
     encryption-protocol=AES encryption-password=your-priv-password \
     read-access=yes write-access=no
 ```
-
-### Finding Interface Names
-
-To list available interfaces on your Mikrotik:
-
-```
-/interface print
-```
-
-Use the exact name from the "NAME" column (e.g., `ether1`, `sfp-sfpplus1`, `bridge1`).
 
 ## Docker
 
@@ -186,7 +182,7 @@ The default 5-second poll interval is lightweight — each poll is a single SNMP
 ## Project Structure
 
 ```
-├── main.go                  # Entry point — wires config, poller, and HTTP server
+├── main.go                  # Entry point — wires config, pollers, and HTTP server
 ├── config.yaml.example      # Example configuration
 ├── Dockerfile               # Multi-stage Docker build
 ├── internal/
@@ -194,7 +190,7 @@ The default 5-second poll interval is lightweight — each poll is a single SNMP
 │   ├── ringbuf/             # Fixed-size ring buffer for time-series data
 │   ├── server/              # HTTP server, SSE broadcasting, embedded static files
 │   │   └── static/          # Frontend (HTML, CSS, JS with uPlot)
-│   └── snmp/                # SNMPv3 poller
+│   └── snmp/                # SNMPv3 poller with interface auto-discovery
 └── web/                     # (reserved)
 ```
 

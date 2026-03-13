@@ -17,20 +17,40 @@ import (
 //go:embed all:static
 var staticFiles embed.FS
 
-// Server serves the dashboard API and frontend.
-type Server struct {
-	buffers    map[string]*ringbuf.RingBuffer
-	interfaces []string
-	mu         sync.RWMutex
-	clients    map[chan snmp.InterfaceSample]struct{}
+// DeviceInfo describes a device and its discovered interfaces.
+type DeviceInfo struct {
+	Name       string   `json:"name"`
+	Interfaces []string `json:"interfaces"`
 }
 
-// New creates a new server with per-interface ring buffers.
-func New(buffers map[string]*ringbuf.RingBuffer, interfaces []string) *Server {
+// Server serves the dashboard API and frontend.
+type Server struct {
+	// devices is the ordered list of devices with their interfaces.
+	devices []DeviceInfo
+	// buffers maps "device/interface" to its ring buffer.
+	buffers map[string]*ringbuf.RingBuffer
+	mu      sync.RWMutex
+	clients map[chan snmp.InterfaceSample]struct{}
+}
+
+// New creates a new server.
+func New() *Server {
 	return &Server{
-		buffers:    buffers,
-		interfaces: interfaces,
-		clients:    make(map[chan snmp.InterfaceSample]struct{}),
+		buffers: make(map[string]*ringbuf.RingBuffer),
+		clients: make(map[chan snmp.InterfaceSample]struct{}),
+	}
+}
+
+// BufKey returns the composite buffer key for a device/interface pair.
+func BufKey(device, iface string) string {
+	return device + "/" + iface
+}
+
+// RegisterDevice adds a device and its discovered interfaces to the server.
+func (s *Server) RegisterDevice(name string, interfaces []string, buffers map[string]*ringbuf.RingBuffer) {
+	s.devices = append(s.devices, DeviceInfo{Name: name, Interfaces: interfaces})
+	for k, buf := range buffers {
+		s.buffers[k] = buf
 	}
 }
 
@@ -65,7 +85,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/stream", s.handleStream)
 	mux.HandleFunc("/history", s.handleHistory)
 	mux.HandleFunc("/health", s.handleHealth)
-	mux.HandleFunc("/interfaces", s.handleInterfaces)
+	mux.HandleFunc("/api/devices", s.handleDevices)
 
 	staticSub, err := fs.Sub(staticFiles, "static")
 	if err != nil {
@@ -99,9 +119,10 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 			return
 		case sample := <-ch:
 			data, _ := json.Marshal(map[string]interface{}{
-				"iface":  sample.Interface,
-				"ts":     sample.Sample.Timestamp,
-				"in_bps": sample.Sample.InBps,
+				"device":  sample.Device,
+				"iface":   sample.Interface,
+				"ts":      sample.Sample.Timestamp,
+				"in_bps":  sample.Sample.InBps,
 				"out_bps": sample.Sample.OutBps,
 			})
 			fmt.Fprintf(w, "data: %s\n\n", data)
@@ -114,17 +135,25 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-cache")
 
-	result := make(map[string][]ringbuf.Sample, len(s.buffers))
-	for name, buf := range s.buffers {
-		result[name] = buf.Snapshot()
+	// Structure: { "device1": { "ether1": [...samples], ... }, ... }
+	result := make(map[string]map[string][]ringbuf.Sample)
+	for _, dev := range s.devices {
+		devMap := make(map[string][]ringbuf.Sample)
+		for _, iface := range dev.Interfaces {
+			key := BufKey(dev.Name, iface)
+			if buf, ok := s.buffers[key]; ok {
+				devMap[iface] = buf.Snapshot()
+			}
+		}
+		result[dev.Name] = devMap
 	}
 	json.NewEncoder(w).Encode(result)
 }
 
-func (s *Server) handleInterfaces(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-cache")
-	json.NewEncoder(w).Encode(s.interfaces)
+	json.NewEncoder(w).Encode(s.devices)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {

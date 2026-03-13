@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>WAN Traffic Monitor</title>
+  <title>Traffic Monitor</title>
   <link rel="stylesheet" href="style.css">
   <script src="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.iife.min.js"></script>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.min.css">
@@ -11,38 +11,11 @@
 <body>
   <div class="container">
     <header>
-      <h1>WAN Traffic</h1>
-      <div class="meta" id="meta"></div>
+      <h1>Traffic Monitor</h1>
+      <div class="status" id="status">Connecting&hellip;</div>
     </header>
-    <div class="tabs" id="tabs"></div>
-    <div class="stats">
-      <div class="stat-card">
-        <span class="label">Inbound</span>
-        <span class="value" id="current-in">—</span>
-      </div>
-      <div class="stat-card">
-        <span class="label">Outbound</span>
-        <span class="value" id="current-out">—</span>
-      </div>
-      <div class="stat-card">
-        <span class="label">Peak In</span>
-        <span class="value" id="peak-in">—</span>
-      </div>
-      <div class="stat-card">
-        <span class="label">Peak Out</span>
-        <span class="value" id="peak-out">—</span>
-      </div>
-      <div class="stat-card">
-        <span class="label">Avg In</span>
-        <span class="value" id="avg-in">—</span>
-      </div>
-      <div class="stat-card">
-        <span class="label">Avg Out</span>
-        <span class="value" id="avg-out">—</span>
-      </div>
-    </div>
-    <div id="chart"></div>
-    <div class="status" id="status">Connecting…</div>
+    <div id="selector"></div>
+    <div id="panels"></div>
   </div>
   <script src="app.js"></script>
 </body>
