@@ -2,4 +2,4 @@ module github.com/palmar/mikrotik-traffic-monitor
 
 go 1.24.1
 
-require github.com/gosnmp/gosnmp v1.43.2 // indirect
+require github.com/gosnmp/gosnmp v1.43.2
