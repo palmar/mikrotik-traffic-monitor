@@ -33,6 +33,8 @@ func main() {
 			Name:         dev.Name,
 			Host:         dev.Host,
 			Port:         dev.Port,
+			SNMPVersion:  dev.SNMPVersion,
+			Community:    dev.Community,
 			Username:     dev.Username,
 			AuthPass:     dev.AuthPass,
 			PrivPass:     dev.PrivPass,

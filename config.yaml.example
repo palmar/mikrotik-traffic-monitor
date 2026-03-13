@@ -2,20 +2,22 @@
 
 # Define one or more Mikrotik devices to monitor.
 # Interfaces are auto-discovered via SNMP — no need to list them here.
+# Each device can use SNMPv2c or SNMPv3 (default: v3).
 devices:
+  # SNMPv3 device (default — requires username, auth_pass, priv_pass)
   - name: "router-1"
     host: "192.168.88.1"
     port: 161
+    # snmp_version: "v3"  # default, can be omitted
     username: "monitor"
     auth_pass: "your-auth-password"
     priv_pass: "your-priv-password"
 
-  # Add more devices as needed:
-  # - name: "router-2"
+  # SNMPv2c device (requires community string)
+  # - name: "switch-1"
   #   host: "192.168.88.2"
-  #   username: "monitor"
-  #   auth_pass: "your-auth-password"
-  #   priv_pass: "your-priv-password"
+  #   snmp_version: "v2c"
+  #   community: "public"
 
 # How often to poll SNMP counters (Go duration string).
 poll_interval: "5s"

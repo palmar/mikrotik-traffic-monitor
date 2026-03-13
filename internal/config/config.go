@@ -18,12 +18,14 @@ type Config struct {
 
 // DeviceConfig holds connection settings for a single Mikrotik device.
 type DeviceConfig struct {
-	Name     string `yaml:"name"`
-	Host     string `yaml:"host"`
-	Port     uint16 `yaml:"port"`
-	Username string `yaml:"username"`
-	AuthPass string `yaml:"auth_pass"`
-	PrivPass string `yaml:"priv_pass"`
+	Name        string `yaml:"name"`
+	Host        string `yaml:"host"`
+	Port        uint16 `yaml:"port"`
+	SNMPVersion string `yaml:"snmp_version"` // "v2c" or "v3" (default: "v3")
+	Community   string `yaml:"community"`    // SNMPv2c community string
+	Username    string `yaml:"username"`     // SNMPv3 username
+	AuthPass    string `yaml:"auth_pass"`    // SNMPv3 auth passphrase
+	PrivPass    string `yaml:"priv_pass"`    // SNMPv3 privacy passphrase
 }
 
 // Duration wraps time.Duration for YAML unmarshaling (e.g. "5s", "10s").
@@ -76,14 +78,31 @@ func Load(path string) (*Config, error) {
 		if dev.Host == "" {
 			return nil, fmt.Errorf("devices[%d].host is required", i)
 		}
-		if dev.Username == "" {
-			return nil, fmt.Errorf("devices[%d].username is required", i)
-		}
 		if dev.Name == "" {
 			cfg.Devices[i].Name = dev.Host
 		}
 		if dev.Port == 0 {
 			cfg.Devices[i].Port = 161
+		}
+		// Default SNMP version to v3
+		switch dev.SNMPVersion {
+		case "":
+			cfg.Devices[i].SNMPVersion = "v3"
+			dev.SNMPVersion = "v3"
+		case "v2c", "v3":
+			// valid
+		default:
+			return nil, fmt.Errorf("devices[%d].snmp_version must be \"v2c\" or \"v3\"", i)
+		}
+		// Validate version-specific fields
+		if dev.SNMPVersion == "v2c" {
+			if dev.Community == "" {
+				return nil, fmt.Errorf("devices[%d].community is required for SNMPv2c", i)
+			}
+		} else {
+			if dev.Username == "" {
+				return nil, fmt.Errorf("devices[%d].username is required for SNMPv3", i)
+			}
 		}
 		name := cfg.Devices[i].Name
 		if names[name] {

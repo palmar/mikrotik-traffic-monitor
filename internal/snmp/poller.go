@@ -23,6 +23,8 @@ type Config struct {
 	Name         string
 	Host         string
 	Port         uint16
+	SNMPVersion  string // "v2c" or "v3"
+	Community    string // SNMPv2c community string
 	Username     string
 	AuthPass     string
 	PrivPass     string
@@ -64,19 +66,26 @@ type Poller struct {
 // It auto-discovers all interfaces and creates ring buffers for each.
 func NewPoller(cfg Config, bufSize int, onSample OnSample) (*Poller, []*DiscoveredInterface, error) {
 	client := &gosnmp.GoSNMP{
-		Target:        cfg.Host,
-		Port:          cfg.Port,
-		Version:       gosnmp.Version3,
-		Timeout:       5 * time.Second,
-		SecurityModel: gosnmp.UserSecurityModel,
-		MsgFlags:      gosnmp.AuthPriv,
-		SecurityParameters: &gosnmp.UsmSecurityParameters{
+		Target:  cfg.Host,
+		Port:    cfg.Port,
+		Timeout: 5 * time.Second,
+	}
+
+	switch cfg.SNMPVersion {
+	case "v2c":
+		client.Version = gosnmp.Version2c
+		client.Community = cfg.Community
+	default: // v3
+		client.Version = gosnmp.Version3
+		client.SecurityModel = gosnmp.UserSecurityModel
+		client.MsgFlags = gosnmp.AuthPriv
+		client.SecurityParameters = &gosnmp.UsmSecurityParameters{
 			UserName:                 cfg.Username,
 			AuthenticationProtocol:   gosnmp.SHA256,
 			AuthenticationPassphrase: cfg.AuthPass,
 			PrivacyProtocol:          gosnmp.AES,
 			PrivacyPassphrase:        cfg.PrivPass,
-		},
+		}
 	}
 
 	if err := client.Connect(); err != nil {
