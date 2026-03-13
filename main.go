@@ -53,7 +53,7 @@ func main() {
 		}
 		sort.Strings(ifaceNames)
 
-		srv.RegisterDevice(dev.Name, ifaceNames, buffers)
+		srv.RegisterDevice(dev.Name, ifaceNames, buffers, poller)
 		pollers = append(pollers, poller)
 		log.Printf("device %q: %d interfaces discovered", dev.Name, len(discovered))
 	}

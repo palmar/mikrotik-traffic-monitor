@@ -5,6 +5,7 @@ import (
 	"log"
 	"math"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gosnmp/gosnmp"
@@ -54,6 +55,8 @@ type Poller struct {
 	cfg        Config
 	client     *gosnmp.GoSNMP
 	onSample   OnSample
+	bufSize    int
+	mu         sync.Mutex
 	interfaces []*ifState
 }
 
@@ -80,7 +83,7 @@ func NewPoller(cfg Config, bufSize int, onSample OnSample) (*Poller, []*Discover
 		return nil, nil, fmt.Errorf("snmp connect %s: %w", cfg.Name, err)
 	}
 
-	p := &Poller{cfg: cfg, client: client, onSample: onSample}
+	p := &Poller{cfg: cfg, client: client, onSample: onSample, bufSize: bufSize}
 
 	ifIndexMap, err := p.walkInterfaces()
 	if err != nil {
@@ -138,11 +141,67 @@ func (p *Poller) walkInterfaces() (map[string]int, error) {
 	return result, nil
 }
 
+// Rediscover re-queries the device for interfaces and returns any newly found ones.
+// Existing interfaces (and their polling state) are preserved.
+func (p *Poller) Rediscover() ([]*DiscoveredInterface, error) {
+	ifIndexMap, err := p.walkInterfaces()
+	if err != nil {
+		return nil, err
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	// Build set of existing interface names
+	existing := make(map[string]bool, len(p.interfaces))
+	for _, iface := range p.interfaces {
+		existing[iface.name] = true
+	}
+
+	var newlyDiscovered []*DiscoveredInterface
+	for name, idx := range ifIndexMap {
+		if existing[name] {
+			continue
+		}
+		buf := ringbuf.New(p.bufSize)
+		p.interfaces = append(p.interfaces, &ifState{
+			name:    name,
+			ifIndex: idx,
+			buf:     buf,
+		})
+		newlyDiscovered = append(newlyDiscovered, &DiscoveredInterface{
+			Name:    name,
+			IfIndex: idx,
+			Buffer:  buf,
+		})
+		log.Printf("[%s] rediscovered new interface %q (ifIndex %d)", p.cfg.Name, name, idx)
+	}
+
+	log.Printf("[%s] rediscovery complete: %d total, %d new", p.cfg.Name, len(p.interfaces), len(newlyDiscovered))
+	return newlyDiscovered, nil
+}
+
+// InterfaceNames returns the names of all known interfaces.
+func (p *Poller) InterfaceNames() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	names := make([]string, len(p.interfaces))
+	for i, iface := range p.interfaces {
+		names[i] = iface.name
+	}
+	return names
+}
+
 func (p *Poller) poll() {
 	now := time.Now()
 
+	p.mu.Lock()
+	snapshot := make([]*ifState, len(p.interfaces))
+	copy(snapshot, p.interfaces)
+	p.mu.Unlock()
+
 	var oids []string
-	for _, iface := range p.interfaces {
+	for _, iface := range snapshot {
 		oids = append(oids,
 			fmt.Sprintf("%s.%d", oidIfHCInOctets, iface.ifIndex),
 			fmt.Sprintf("%s.%d", oidIfHCOutOctets, iface.ifIndex),
@@ -160,7 +219,7 @@ func (p *Poller) poll() {
 		values[v.Name] = gosnmp.ToBigInt(v.Value).Uint64()
 	}
 
-	for _, iface := range p.interfaces {
+	for _, iface := range snapshot {
 		inOID := fmt.Sprintf("%s.%d", oidIfHCInOctets, iface.ifIndex)
 		outOID := fmt.Sprintf("%s.%d", oidIfHCOutOctets, iface.ifIndex)
 		inOctets := values[inOID]

@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"sort"
 	"sync"
 	"time"
 
@@ -27,6 +28,8 @@ type DeviceInfo struct {
 type Server struct {
 	// devices is the ordered list of devices with their interfaces.
 	devices []DeviceInfo
+	// pollers maps device name to its SNMP poller (for rediscovery).
+	pollers map[string]*snmp.Poller
 	// buffers maps "device/interface" to its ring buffer.
 	buffers map[string]*ringbuf.RingBuffer
 	mu      sync.RWMutex
@@ -36,6 +39,7 @@ type Server struct {
 // New creates a new server.
 func New() *Server {
 	return &Server{
+		pollers: make(map[string]*snmp.Poller),
 		buffers: make(map[string]*ringbuf.RingBuffer),
 		clients: make(map[chan snmp.InterfaceSample]struct{}),
 	}
@@ -47,8 +51,9 @@ func BufKey(device, iface string) string {
 }
 
 // RegisterDevice adds a device and its discovered interfaces to the server.
-func (s *Server) RegisterDevice(name string, interfaces []string, buffers map[string]*ringbuf.RingBuffer) {
+func (s *Server) RegisterDevice(name string, interfaces []string, buffers map[string]*ringbuf.RingBuffer, poller *snmp.Poller) {
 	s.devices = append(s.devices, DeviceInfo{Name: name, Interfaces: interfaces})
+	s.pollers[name] = poller
 	for k, buf := range buffers {
 		s.buffers[k] = buf
 	}
@@ -86,6 +91,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/history", s.handleHistory)
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.HandleFunc("/api/devices", s.handleDevices)
+	mux.HandleFunc("/api/devices/rediscover", s.handleRediscover)
 
 	staticSub, err := fs.Sub(staticFiles, "static")
 	if err != nil {
@@ -154,6 +160,58 @@ func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-cache")
 	json.NewEncoder(w).Encode(s.devices)
+}
+
+// handleRediscover triggers interface rediscovery on a device.
+// POST /api/devices/rediscover { "device": "name" }
+func (s *Server) handleRediscover(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Device string `json:"device"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid json", http.StatusBadRequest)
+		return
+	}
+
+	poller, ok := s.pollers[req.Device]
+	if !ok {
+		http.Error(w, "device not found", http.StatusNotFound)
+		return
+	}
+
+	newIfaces, err := poller.Rediscover()
+	if err != nil {
+		http.Error(w, "rediscovery failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Register any newly discovered interfaces
+	if len(newIfaces) > 0 {
+		for i, dev := range s.devices {
+			if dev.Name == req.Device {
+				for _, di := range newIfaces {
+					s.devices[i].Interfaces = append(s.devices[i].Interfaces, di.Name)
+					s.buffers[BufKey(req.Device, di.Name)] = di.Buffer
+				}
+				sort.Strings(s.devices[i].Interfaces)
+				break
+			}
+		}
+	}
+
+	// Return the full updated device info
+	for _, dev := range s.devices {
+		if dev.Name == req.Device {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(dev)
+			return
+		}
+	}
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {

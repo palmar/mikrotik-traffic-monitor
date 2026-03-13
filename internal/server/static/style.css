@@ -58,13 +58,40 @@ h1 {
   margin-bottom: 0.75rem;
 }
 
+.device-selector-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.4rem;
+}
+
 .device-selector-label {
   font-size: 0.8rem;
   font-weight: 600;
   color: var(--text-dim);
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  margin-bottom: 0.4rem;
+}
+
+.rediscover-btn {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.15rem 0.5rem;
+  color: var(--text-dim);
+  font-size: 0.65rem;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.rediscover-btn:hover {
+  background: var(--border);
+  color: var(--text);
+}
+
+.rediscover-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .iface-chips {

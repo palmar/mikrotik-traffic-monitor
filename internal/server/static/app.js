@@ -51,6 +51,37 @@
     localStorage.setItem(STORAGE_KEY, JSON.stringify(selected));
   }
 
+  function rediscoverDevice(deviceName, btn) {
+    btn.disabled = true;
+    btn.textContent = "Discovering\u2026";
+
+    fetch("/api/devices/rediscover", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ device: deviceName })
+    })
+      .then(function (r) {
+        if (!r.ok) throw new Error("rediscovery failed");
+        return r.json();
+      })
+      .then(function (updatedDev) {
+        // Update device in our list
+        for (var i = 0; i < devices.length; i++) {
+          if (devices[i].name === updatedDev.name) {
+            devices[i].interfaces = updatedDev.interfaces || [];
+            break;
+          }
+        }
+        renderSelector();
+        syncPanels();
+      })
+      .catch(function (err) {
+        console.error("rediscover failed:", err);
+        btn.disabled = false;
+        btn.textContent = "Rediscover";
+      });
+  }
+
   // Selector UI
   function renderSelector() {
     selectorEl.innerHTML = "";
@@ -60,10 +91,23 @@
       var group = document.createElement("div");
       group.className = "device-selector";
 
+      var labelRow = document.createElement("div");
+      labelRow.className = "device-selector-header";
+
       var label = document.createElement("div");
       label.className = "device-selector-label";
       label.textContent = dev.name;
-      group.appendChild(label);
+      labelRow.appendChild(label);
+
+      var rediscoverBtn = document.createElement("button");
+      rediscoverBtn.className = "rediscover-btn";
+      rediscoverBtn.textContent = "Rediscover";
+      rediscoverBtn.addEventListener("click", (function (name, btn) {
+        return function () { rediscoverDevice(name, btn); };
+      })(dev.name, rediscoverBtn));
+      labelRow.appendChild(rediscoverBtn);
+
+      group.appendChild(labelRow);
 
       var chips = document.createElement("div");
       chips.className = "iface-chips";
