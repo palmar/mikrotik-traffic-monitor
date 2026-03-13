@@ -1,0 +1,22 @@
+# Mikrotik Traffic Monitor configuration
+
+router:
+  host: "192.168.88.1"
+  port: 161
+  username: "monitor"
+  auth_pass: "your-auth-password"
+  priv_pass: "your-priv-password"
+
+# List of router interfaces to monitor.
+# Use the Mikrotik interface name (e.g. ether1, sfp1, sfp-sfpplus1).
+interfaces:
+  - ether1
+
+# How often to poll SNMP counters (Go duration string).
+poll_interval: "5s"
+
+# Number of samples to keep in the ring buffer per interface.
+ring_buffer_size: 240
+
+# HTTP listen address for the dashboard.
+listen_addr: ":8080"

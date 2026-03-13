@@ -41,6 +41,34 @@ h1 {
   color: var(--text-dim);
 }
 
+.tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.tab {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.4rem 0.9rem;
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.tab:hover {
+  background: var(--border);
+  color: var(--text);
+}
+
+.tab.active {
+  background: var(--border);
+  color: var(--text);
+  font-weight: 600;
+}
+
 .stats {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));

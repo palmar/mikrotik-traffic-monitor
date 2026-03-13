@@ -1,53 +1,46 @@
 package main
 
 import (
+	"flag"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
-	"time"
 
+	"github.com/palmar/mikrotik-traffic-monitor/internal/config"
 	"github.com/palmar/mikrotik-traffic-monitor/internal/ringbuf"
 	"github.com/palmar/mikrotik-traffic-monitor/internal/server"
 	"github.com/palmar/mikrotik-traffic-monitor/internal/snmp"
 )
 
-func envOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
-
 func main() {
-	pollSec, _ := strconv.Atoi(envOr("POLL_INTERVAL_S", "5"))
-	snmpPort, _ := strconv.ParseUint(envOr("SNMP_PORT", "161"), 10, 16)
-	listenAddr := envOr("LISTEN_ADDR", ":8080")
-	bufSize, _ := strconv.Atoi(envOr("RING_BUFFER_SIZE", "240"))
+	configPath := flag.String("config", "config.yaml", "path to configuration file")
+	flag.Parse()
 
-	cfg := snmp.Config{
-		Host:         envOr("SNMP_HOST", ""),
-		Port:         uint16(snmpPort),
-		Username:     envOr("SNMP_USERNAME", ""),
-		AuthPass:     envOr("SNMP_AUTH_PASS", ""),
-		PrivPass:     envOr("SNMP_PRIV_PASS", ""),
-		InterfaceStr: envOr("SNMP_INTERFACE", "sfp12_wan"),
-		PollInterval: time.Duration(pollSec) * time.Second,
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		log.Fatalf("config: %v", err)
 	}
 
-	if cfg.Host == "" {
-		log.Fatal("SNMP_HOST is required")
-	}
-	if cfg.Username == "" {
-		log.Fatal("SNMP_USERNAME is required")
+	// Create a ring buffer per interface
+	buffers := make(map[string]*ringbuf.RingBuffer, len(cfg.Interfaces))
+	for _, iface := range cfg.Interfaces {
+		buffers[iface] = ringbuf.New(cfg.RingBufferSize)
 	}
 
-	buf := ringbuf.New(bufSize)
-	srv := server.New(buf)
+	srv := server.New(buffers, cfg.Interfaces)
 
-	poller, err := snmp.NewPoller(cfg, buf, srv.Broadcast)
+	snmpCfg := snmp.Config{
+		Host:         cfg.Router.Host,
+		Port:         cfg.Router.Port,
+		Username:     cfg.Router.Username,
+		AuthPass:     cfg.Router.AuthPass,
+		PrivPass:     cfg.Router.PrivPass,
+		PollInterval: cfg.PollInterval.Duration(),
+	}
+
+	poller, err := snmp.NewPoller(snmpCfg, buffers, srv.Broadcast)
 	if err != nil {
 		log.Fatalf("failed to create poller: %v", err)
 	}
@@ -56,12 +49,12 @@ func main() {
 	go poller.Run(done)
 
 	httpSrv := &http.Server{
-		Addr:    listenAddr,
+		Addr:    cfg.ListenAddr,
 		Handler: srv.Handler(),
 	}
 
 	go func() {
-		log.Printf("listening on %s", listenAddr)
+		log.Printf("listening on %s (interfaces: %v)", cfg.ListenAddr, cfg.Interfaces)
 		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("http: %v", err)
 		}

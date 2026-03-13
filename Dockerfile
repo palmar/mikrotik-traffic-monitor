@@ -10,3 +10,4 @@ RUN apk add --no-cache ca-certificates
 COPY --from=build /traffic-monitor /traffic-monitor
 EXPOSE 8080
 ENTRYPOINT ["/traffic-monitor"]
+CMD ["-config", "/etc/traffic-monitor/config.yaml"]

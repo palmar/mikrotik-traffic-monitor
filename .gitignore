@@ -1,3 +1,4 @@
 traffic-monitor
 *.exe
 .env
+config.yaml
