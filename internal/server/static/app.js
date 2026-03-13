@@ -88,6 +88,16 @@
     var saved = loadSelection();
 
     devices.forEach(function (dev) {
+      // Initialise selection state for this device
+      dev.interfaces.forEach(function (iface) {
+        var key = bufKey(dev.name, iface);
+        if (saved && saved.hasOwnProperty(key)) {
+          selected[key] = saved[key];
+        } else if (!saved) {
+          selected[key] = dev.interfaces.indexOf(iface) < 2;
+        }
+      });
+
       var group = document.createElement("div");
       group.className = "device-selector";
 
@@ -109,33 +119,79 @@
 
       group.appendChild(labelRow);
 
-      var chips = document.createElement("div");
-      chips.className = "iface-chips";
+      // Dropdown wrapper
+      var dropdown = document.createElement("div");
+      dropdown.className = "iface-dropdown";
+
+      var trigger = document.createElement("button");
+      trigger.className = "iface-dropdown-trigger";
+      trigger.type = "button";
+
+      function updateTrigger() {
+        var sel = dev.interfaces.filter(function (iface) {
+          return selected[bufKey(dev.name, iface)];
+        });
+        if (sel.length === 0) {
+          trigger.innerHTML = '<span class="iface-dropdown-placeholder">Select interfaces\u2026</span><span class="iface-dropdown-arrow">\u25BE</span>';
+        } else {
+          var html = sel.map(function (name) {
+            return '<span class="iface-tag">' + name + '</span>';
+          }).join("");
+          trigger.innerHTML = html + '<span class="iface-dropdown-arrow">\u25BE</span>';
+        }
+      }
+      updateTrigger();
+
+      var menu = document.createElement("div");
+      menu.className = "iface-dropdown-menu";
 
       dev.interfaces.forEach(function (iface) {
         var key = bufKey(dev.name, iface);
+        var item = document.createElement("label");
+        item.className = "iface-dropdown-item";
 
-        // Default selection: use saved, or select first 2 interfaces per device
-        if (saved && saved.hasOwnProperty(key)) {
-          selected[key] = saved[key];
-        } else if (!saved) {
-          selected[key] = dev.interfaces.indexOf(iface) < 2;
-        }
+        var cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.checked = !!selected[key];
 
-        var chip = document.createElement("button");
-        chip.className = "iface-chip" + (selected[key] ? " selected" : "");
-        chip.textContent = iface;
-        chip.addEventListener("click", function () {
-          selected[key] = !selected[key];
-          chip.className = "iface-chip" + (selected[key] ? " selected" : "");
+        var span = document.createElement("span");
+        span.textContent = iface;
+
+        cb.addEventListener("change", function () {
+          selected[key] = cb.checked;
           saveSelection();
+          updateTrigger();
           syncPanels();
         });
-        chips.appendChild(chip);
+
+        item.appendChild(cb);
+        item.appendChild(span);
+        menu.appendChild(item);
       });
 
-      group.appendChild(chips);
+      trigger.addEventListener("click", function (e) {
+        e.stopPropagation();
+        var isOpen = dropdown.classList.contains("open");
+        // Close all other dropdowns first
+        var allDropdowns = selectorEl.querySelectorAll(".iface-dropdown.open");
+        for (var i = 0; i < allDropdowns.length; i++) {
+          allDropdowns[i].classList.remove("open");
+        }
+        if (!isOpen) dropdown.classList.add("open");
+      });
+
+      dropdown.appendChild(trigger);
+      dropdown.appendChild(menu);
+      group.appendChild(dropdown);
       selectorEl.appendChild(group);
+    });
+
+    // Close dropdowns when clicking outside
+    document.addEventListener("click", function () {
+      var allDropdowns = selectorEl.querySelectorAll(".iface-dropdown.open");
+      for (var i = 0; i < allDropdowns.length; i++) {
+        allDropdowns[i].classList.remove("open");
+      }
     });
   }
 
