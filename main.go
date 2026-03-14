@@ -43,7 +43,8 @@ func main() {
 
 		poller, discovered, err := snmp.NewPoller(snmpCfg, cfg.RingBufferSize, srv.Broadcast)
 		if err != nil {
-			log.Fatalf("failed to create poller for %s: %v", dev.Name, err)
+			log.Printf("WARNING: skipping device %s (unreachable at startup): %v", dev.Name, err)
+			continue
 		}
 
 		// Collect interface names and buffers for server registration
