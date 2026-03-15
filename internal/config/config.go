@@ -24,8 +24,10 @@ type DeviceConfig struct {
 	SNMPVersion string `yaml:"snmp_version"` // "v2c" or "v3" (default: "v3")
 	Community   string `yaml:"community"`    // SNMPv2c community string
 	Username    string `yaml:"username"`     // SNMPv3 username
-	AuthPass    string `yaml:"auth_pass"`    // SNMPv3 auth passphrase
-	PrivPass    string `yaml:"priv_pass"`    // SNMPv3 privacy passphrase
+	AuthPass     string `yaml:"auth_pass"`     // SNMPv3 auth passphrase
+	PrivPass     string `yaml:"priv_pass"`     // SNMPv3 privacy passphrase
+	AuthProtocol string `yaml:"auth_protocol"` // SNMPv3 auth protocol: sha1, sha256 (default: sha1)
+	PrivProtocol string `yaml:"priv_protocol"` // SNMPv3 privacy protocol: aes, des (default: aes)
 }
 
 // Duration wraps time.Duration for YAML unmarshaling (e.g. "5s", "10s").
@@ -102,6 +104,22 @@ func Load(path string) (*Config, error) {
 		} else {
 			if dev.Username == "" {
 				return nil, fmt.Errorf("devices[%d].username is required for SNMPv3", i)
+			}
+			switch dev.AuthProtocol {
+			case "":
+				cfg.Devices[i].AuthProtocol = "sha1"
+			case "sha1", "sha256":
+				// valid
+			default:
+				return nil, fmt.Errorf("devices[%d].auth_protocol must be \"sha1\" or \"sha256\"", i)
+			}
+			switch dev.PrivProtocol {
+			case "":
+				cfg.Devices[i].PrivProtocol = "aes"
+			case "aes", "des":
+				// valid
+			default:
+				return nil, fmt.Errorf("devices[%d].priv_protocol must be \"aes\" or \"des\"", i)
 			}
 		}
 		name := cfg.Devices[i].Name

@@ -38,6 +38,8 @@ func main() {
 			Username:     dev.Username,
 			AuthPass:     dev.AuthPass,
 			PrivPass:     dev.PrivPass,
+			AuthProtocol: dev.AuthProtocol,
+			PrivProtocol: dev.PrivProtocol,
 			PollInterval: cfg.PollInterval.Duration(),
 		}
 

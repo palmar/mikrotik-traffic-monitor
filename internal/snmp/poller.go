@@ -28,6 +28,8 @@ type Config struct {
 	Username     string
 	AuthPass     string
 	PrivPass     string
+	AuthProtocol string // "sha1" or "sha256"
+	PrivProtocol string // "aes" or "des"
 	PollInterval time.Duration
 }
 
@@ -79,11 +81,21 @@ func NewPoller(cfg Config, bufSize int, onSample OnSample) (*Poller, []*Discover
 		client.Version = gosnmp.Version3
 		client.SecurityModel = gosnmp.UserSecurityModel
 		client.MsgFlags = gosnmp.AuthPriv
+
+		authProto := gosnmp.SHA
+		if cfg.AuthProtocol == "sha256" {
+			authProto = gosnmp.SHA256
+		}
+		privProto := gosnmp.AES
+		if cfg.PrivProtocol == "des" {
+			privProto = gosnmp.DES
+		}
+
 		client.SecurityParameters = &gosnmp.UsmSecurityParameters{
 			UserName:                 cfg.Username,
-			AuthenticationProtocol:   gosnmp.SHA256,
+			AuthenticationProtocol:   authProto,
 			AuthenticationPassphrase: cfg.AuthPass,
-			PrivacyProtocol:          gosnmp.AES,
+			PrivacyProtocol:          privProto,
 			PrivacyPassphrase:        cfg.PrivPass,
 		}
 	}
