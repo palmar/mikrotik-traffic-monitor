@@ -1,13 +1,15 @@
 # Mikrotik Traffic Monitor
 
-Real-time web dashboard for monitoring network interface traffic on Mikrotik routers via SNMPv3. Supports multiple devices with automatic interface discovery and a clean, dark-themed UI.
+Real-time web dashboard for monitoring network interface traffic on Mikrotik routers via SNMP (v2c and v3). Supports multiple devices with automatic interface discovery and a clean, dark-themed UI.
 
 ## Features
 
 - **Multi-device monitoring** — configure any number of Mikrotik routers, each polled independently
 - **Interface auto-discovery** — interfaces are discovered via SNMP, no manual listing required
 - **Interface selector** — pick which interfaces to display from a dropdown in the UI (persisted in localStorage)
-- **SNMPv3 polling** — reads 64-bit counters (`ifHCInOctets` / `ifHCOutOctets`) for accurate high-speed interface stats
+- **SNMPv2c and SNMPv3 support** — reads 64-bit counters (`ifHCInOctets` / `ifHCOutOctets`) for accurate high-speed interface stats; configurable auth (SHA1/SHA256) and privacy (AES/DES) protocols for v3
+- **Per-device rediscover** — re-detect interfaces on any device without restarting the monitor
+- **Resilient startup** — unreachable devices are skipped at startup instead of crashing the process
 - **Unified single-page layout** — all selected interfaces displayed on one page, grouped by device
 - **Real-time updates** — Server-Sent Events push data to the browser with no polling or page reloads
 - **Rolling time-series chart** — powered by uPlot, with configurable history depth
@@ -18,8 +20,9 @@ Real-time web dashboard for monitoring network interface traffic on Mikrotik rou
 ## Requirements
 
 - **Go 1.24+** (build only)
-- **Mikrotik RouterOS 7.x** with SNMPv3 enabled
-- An SNMPv3 user configured on the router with `authPriv` security level (SHA + AES)
+- **Mikrotik RouterOS 7.x** (or any SNMP-capable device) with SNMPv2c or SNMPv3 enabled
+- For SNMPv3: a user configured with `authPriv` security level (SHA1/SHA256 + AES/DES)
+- For SNMPv2c: a community string with read access
 
 ## Quick Start
 
@@ -48,18 +51,22 @@ All settings live in a single YAML file. Copy `config.yaml.example` to `config.y
 ```yaml
 # Define your Mikrotik devices
 devices:
+  # SNMPv3 device (default)
   - name: "router-1"
     host: "192.168.88.1"
     port: 161
+    # snmp_version: "v3"  # default, can be omitted
     username: "monitor"
     auth_pass: "your-auth-password"
     priv_pass: "your-priv-password"
+    auth_protocol: "sha1"   # "sha1" (default) or "sha256"
+    priv_protocol: "aes"    # "aes" (default) or "des"
 
-  - name: "router-2"
-    host: "10.0.0.1"
-    username: "monitor"
-    auth_pass: "your-auth-password"
-    priv_pass: "your-priv-password"
+  # SNMPv2c device
+  - name: "switch-1"
+    host: "192.168.88.2"
+    snmp_version: "v2c"
+    community: "public"
 
 # Polling frequency (Go duration string: "1s", "5s", "10s", etc.)
 poll_interval: "5s"
@@ -81,16 +88,20 @@ Interfaces are **auto-discovered** — the monitor queries each device for its i
 | `devices[].name` | No | `host` | Display name for the device |
 | `devices[].host` | Yes | — | Router IP address or hostname |
 | `devices[].port` | No | `161` | SNMP UDP port |
-| `devices[].username` | Yes | — | SNMPv3 username |
-| `devices[].auth_pass` | No | — | SNMPv3 auth passphrase (SHA) |
-| `devices[].priv_pass` | No | — | SNMPv3 privacy passphrase (AES) |
+| `devices[].snmp_version` | No | `v3` | `"v3"` or `"v2c"` |
+| `devices[].username` | v3 only | — | SNMPv3 username |
+| `devices[].auth_pass` | v3 only | — | SNMPv3 auth passphrase |
+| `devices[].priv_pass` | v3 only | — | SNMPv3 privacy passphrase |
+| `devices[].auth_protocol` | No | `sha1` | SNMPv3 auth protocol: `"sha1"` or `"sha256"` |
+| `devices[].priv_protocol` | No | `aes` | SNMPv3 privacy protocol: `"aes"` or `"des"` |
+| `devices[].community` | v2c only | — | SNMPv2c community string |
 | `poll_interval` | No | `5s` | How often to read SNMP counters |
 | `ring_buffer_size` | No | `240` | Data points to retain per interface |
 | `listen_addr` | No | `:8080` | `host:port` the HTTP server binds to |
 
-### Mikrotik SNMPv3 Setup
+### Mikrotik SNMP Setup
 
-On your Mikrotik router, enable SNMP and create an SNMPv3 user:
+On your Mikrotik router, enable SNMP and create an SNMPv3 user (or use SNMPv2c with a community string):
 
 ```
 /snmp set enabled=yes
@@ -190,10 +201,9 @@ The default 5-second poll interval is lightweight — each poll is a single SNMP
 │   ├── ringbuf/             # Fixed-size ring buffer for time-series data
 │   ├── server/              # HTTP server, SSE broadcasting, embedded static files
 │   │   └── static/          # Frontend (HTML, CSS, JS with uPlot)
-│   └── snmp/                # SNMPv3 poller with interface auto-discovery
-└── web/                     # (reserved)
+│   └── snmp/                # SNMP poller (v2c/v3) with interface auto-discovery
 ```
 
 ## License
 
-See [LICENSE](LICENSE) for details.
+MIT

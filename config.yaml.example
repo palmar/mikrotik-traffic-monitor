@@ -12,6 +12,8 @@ devices:
     username: "monitor"
     auth_pass: "your-auth-password"
     priv_pass: "your-priv-password"
+    # auth_protocol: "sha1"   # "sha1" (default) or "sha256"
+    # priv_protocol: "aes"    # "aes" (default) or "des"
 
   # SNMPv2c device (requires community string)
   # - name: "switch-1"
