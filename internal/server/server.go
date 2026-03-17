@@ -59,6 +59,21 @@ func (s *Server) RegisterDevice(name string, interfaces []string, buffers map[st
 	}
 }
 
+// GetBuffer returns the ring buffer for a device/interface pair.
+func (s *Server) GetBuffer(device, iface string) *ringbuf.RingBuffer {
+	return s.buffers[BufKey(device, iface)]
+}
+
+// DeviceInterfaces returns the interface names for a device.
+func (s *Server) DeviceInterfaces(device string) []string {
+	for _, dev := range s.devices {
+		if dev.Name == device {
+			return dev.Interfaces
+		}
+	}
+	return nil
+}
+
 // Broadcast sends a sample to all connected SSE clients.
 func (s *Server) Broadcast(sample snmp.InterfaceSample) {
 	s.mu.RLock()

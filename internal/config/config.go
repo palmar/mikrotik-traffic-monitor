@@ -14,6 +14,16 @@ type Config struct {
 	PollInterval   Duration       `yaml:"poll_interval"`
 	RingBufferSize int            `yaml:"ring_buffer_size"`
 	ListenAddr     string         `yaml:"listen_addr"`
+	Report         ReportConfig   `yaml:"report"`
+}
+
+// ReportConfig holds weekly email report settings.
+type ReportConfig struct {
+	ResendAPIKey string `yaml:"resend_api_key"`
+	FromAddr     string `yaml:"from_addr"`
+	Timezone     string `yaml:"report_timezone"`
+	DayOfWeek    int    `yaml:"report_day_of_week"` // 0=Sunday, 6=Saturday
+	Hour         int    `yaml:"report_hour"`        // 0-23
 }
 
 // DeviceConfig holds connection settings for a single Mikrotik device.
@@ -28,6 +38,7 @@ type DeviceConfig struct {
 	PrivPass     string `yaml:"priv_pass"`     // SNMPv3 privacy passphrase
 	AuthProtocol string `yaml:"auth_protocol"` // SNMPv3 auth protocol: sha1, sha256 (default: sha1)
 	PrivProtocol string `yaml:"priv_protocol"` // SNMPv3 privacy protocol: aes, des (default: aes)
+	OwnerEmail   string `yaml:"owner_email"`   // email address for weekly reports
 }
 
 // Duration wraps time.Duration for YAML unmarshaling (e.g. "5s", "10s").
@@ -131,6 +142,29 @@ func Load(path string) (*Config, error) {
 
 	if cfg.RingBufferSize < 1 {
 		return nil, fmt.Errorf("ring_buffer_size must be >= 1")
+	}
+
+	// Validate report config if partially set
+	r := cfg.Report
+	if r.ResendAPIKey != "" || r.FromAddr != "" {
+		if r.ResendAPIKey == "" {
+			return nil, fmt.Errorf("report.resend_api_key is required when report is configured")
+		}
+		if r.FromAddr == "" {
+			return nil, fmt.Errorf("report.from_addr is required when report is configured")
+		}
+		if r.Timezone == "" {
+			cfg.Report.Timezone = "UTC"
+		}
+		if _, err := time.LoadLocation(cfg.Report.Timezone); err != nil {
+			return nil, fmt.Errorf("report.report_timezone %q: %w", cfg.Report.Timezone, err)
+		}
+		if r.DayOfWeek < 0 || r.DayOfWeek > 6 {
+			return nil, fmt.Errorf("report.report_day_of_week must be 0-6")
+		}
+		if r.Hour < 0 || r.Hour > 23 {
+			return nil, fmt.Errorf("report.report_hour must be 0-23")
+		}
 	}
 
 	return cfg, nil

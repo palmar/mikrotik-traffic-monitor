@@ -14,12 +14,14 @@ devices:
     priv_pass: "your-priv-password"
     # auth_protocol: "sha1"   # "sha1" (default) or "sha256"
     # priv_protocol: "aes"    # "aes" (default) or "des"
+    owner_email: "admin@example.com"  # receives weekly health reports
 
   # SNMPv2c device (requires community string)
   # - name: "switch-1"
   #   host: "192.168.88.2"
   #   snmp_version: "v2c"
   #   community: "public"
+  #   owner_email: "ops@example.com"
 
 # How often to poll SNMP counters (Go duration string).
 poll_interval: "5s"
@@ -29,3 +31,12 @@ ring_buffer_size: 240
 
 # HTTP listen address for the dashboard.
 listen_addr: ":8080"
+
+# Weekly email report settings (optional).
+# Requires a Resend API key. Reports are sent to each device's owner_email.
+# report:
+#   resend_api_key: "re_your_api_key"
+#   from_addr: "NetWatch <netwatch@yourdomain.com>"
+#   report_timezone: "Atlantic/Reykjavik"
+#   report_day_of_week: 1   # 0=Sunday, 6=Saturday
+#   report_hour: 9           # 0-23, in the configured timezone

@@ -8,8 +8,10 @@ import (
 	"os/signal"
 	"sort"
 	"syscall"
+	"time"
 
 	"github.com/palmar/mikrotik-traffic-monitor/internal/config"
+	"github.com/palmar/mikrotik-traffic-monitor/internal/report"
 	"github.com/palmar/mikrotik-traffic-monitor/internal/ringbuf"
 	"github.com/palmar/mikrotik-traffic-monitor/internal/server"
 	"github.com/palmar/mikrotik-traffic-monitor/internal/snmp"
@@ -65,6 +67,35 @@ func main() {
 
 	for _, p := range pollers {
 		go p.Run(done)
+	}
+
+	// Start weekly email report scheduler if configured
+	if cfg.Report.ResendAPIKey != "" {
+		var deviceEntries []report.DeviceEntry
+		for _, dev := range cfg.Devices {
+			if dev.OwnerEmail != "" {
+				deviceEntries = append(deviceEntries, report.DeviceEntry{
+					Name:       dev.Name,
+					OwnerEmail: dev.OwnerEmail,
+				})
+			}
+		}
+		if len(deviceEntries) > 0 {
+			reportCfg := report.Config{
+				ResendAPIKey: cfg.Report.ResendAPIKey,
+				FromAddr:     cfg.Report.FromAddr,
+				Timezone:     cfg.Report.Timezone,
+				DayOfWeek:    time.Weekday(cfg.Report.DayOfWeek),
+				Hour:         cfg.Report.Hour,
+			}
+			scheduler, err := report.NewScheduler(reportCfg, deviceEntries, srv.GetBuffer, srv.DeviceInterfaces)
+			if err != nil {
+				log.Fatalf("report scheduler: %v", err)
+			}
+			go scheduler.Run(done)
+		} else {
+			log.Println("report: no devices have owner_email set, skipping report scheduler")
+		}
 	}
 
 	httpSrv := &http.Server{
