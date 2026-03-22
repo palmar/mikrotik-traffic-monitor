@@ -50,6 +50,14 @@ func BufKey(device, iface string) string {
 	return device + "/" + iface
 }
 
+// Reset clears all device registrations so the server can be re-populated on config reload.
+// SSE clients remain connected; they will start receiving samples from the new pollers.
+func (s *Server) Reset() {
+	s.devices = nil
+	s.pollers = make(map[string]*snmp.Poller)
+	s.buffers = make(map[string]*ringbuf.RingBuffer)
+}
+
 // RegisterDevice adds a device and its discovered interfaces to the server.
 func (s *Server) RegisterDevice(name string, interfaces []string, buffers map[string]*ringbuf.RingBuffer, poller *snmp.Poller) {
 	s.devices = append(s.devices, DeviceInfo{Name: name, Interfaces: interfaces})

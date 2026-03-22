@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/palmar/mikrotik-traffic-monitor/internal/config"
 	"github.com/palmar/mikrotik-traffic-monitor/internal/report"
 	"github.com/palmar/mikrotik-traffic-monitor/internal/ringbuf"
@@ -19,6 +20,7 @@ import (
 
 func main() {
 	configPath := flag.String("config", "config.yaml", "path to configuration file")
+	noWatch := flag.Bool("no-watch", false, "disable config file watching")
 	flag.Parse()
 
 	cfg, err := config.Load(*configPath)
@@ -27,9 +29,103 @@ func main() {
 	}
 
 	srv := server.New()
-	done := make(chan struct{})
-	var pollers []*snmp.Poller
+	shutdown := make(chan struct{})
 
+	// pollerDone is closed to stop the current generation of pollers/scheduler.
+	// It is replaced on each config reload.
+	pollerDone := make(chan struct{})
+
+	startPollers(cfg, srv, pollerDone)
+
+	httpSrv := &http.Server{
+		Addr:    cfg.ListenAddr,
+		Handler: srv.Handler(),
+	}
+
+	go func() {
+		log.Printf("listening on %s (%d devices)", cfg.ListenAddr, len(cfg.Devices))
+		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("http: %v", err)
+		}
+	}()
+
+	// reload is a channel that triggers config reload from either SIGHUP or file watcher.
+	reload := make(chan struct{}, 1)
+
+	// Set up SIGHUP handler
+	sighup := make(chan os.Signal, 1)
+	signal.Notify(sighup, syscall.SIGHUP)
+	go func() {
+		for {
+			select {
+			case <-shutdown:
+				return
+			case <-sighup:
+				select {
+				case reload <- struct{}{}:
+				default:
+				}
+			}
+		}
+	}()
+
+	// Set up config file watcher
+	if !*noWatch {
+		watcher, err := fsnotify.NewWatcher()
+		if err != nil {
+			log.Printf("WARNING: config file watching disabled: %v", err)
+		} else {
+			if err := watcher.Add(*configPath); err != nil {
+				log.Printf("WARNING: cannot watch config file %s: %v", *configPath, err)
+				watcher.Close()
+			} else {
+				go watchConfig(watcher, reload, shutdown)
+				log.Printf("watching config file %s for changes", *configPath)
+			}
+		}
+	}
+
+	// Main loop: handle reload signals and shutdown
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	for {
+		select {
+		case <-sig:
+			log.Println("shutting down")
+			close(shutdown)
+			close(pollerDone)
+			httpSrv.Close()
+			return
+
+		case <-reload:
+			log.Println("config reload triggered")
+			newCfg, err := config.Load(*configPath)
+			if err != nil {
+				log.Printf("config reload failed (keeping previous config): %v", err)
+				continue
+			}
+
+			// Stop current pollers and scheduler
+			close(pollerDone)
+
+			// Check if listen address changed
+			if newCfg.ListenAddr != cfg.ListenAddr {
+				log.Printf("NOTE: listen_addr changed from %s to %s (requires restart to take effect)", cfg.ListenAddr, newCfg.ListenAddr)
+			}
+
+			// Reset server and start new pollers
+			srv.Reset()
+			pollerDone = make(chan struct{})
+			startPollers(newCfg, srv, pollerDone)
+
+			cfg = newCfg
+			log.Println("config reloaded successfully")
+		}
+	}
+}
+
+// startPollers initializes SNMP pollers and the report scheduler from the given config.
+func startPollers(cfg *config.Config, srv *server.Server, done chan struct{}) {
 	for _, dev := range cfg.Devices {
 		snmpCfg := snmp.Config{
 			Name:         dev.Name,
@@ -47,11 +143,10 @@ func main() {
 
 		poller, discovered, err := snmp.NewPoller(snmpCfg, cfg.RingBufferSize, srv.Broadcast)
 		if err != nil {
-			log.Printf("WARNING: skipping device %s (unreachable at startup): %v", dev.Name, err)
+			log.Printf("WARNING: skipping device %s (unreachable): %v", dev.Name, err)
 			continue
 		}
 
-		// Collect interface names and buffers for server registration
 		var ifaceNames []string
 		buffers := make(map[string]*ringbuf.RingBuffer)
 		for _, di := range discovered {
@@ -61,12 +156,8 @@ func main() {
 		sort.Strings(ifaceNames)
 
 		srv.RegisterDevice(dev.Name, ifaceNames, buffers, poller)
-		pollers = append(pollers, poller)
+		go poller.Run(done)
 		log.Printf("device %q: %d interfaces discovered", dev.Name, len(discovered))
-	}
-
-	for _, p := range pollers {
-		go p.Run(done)
 	}
 
 	// Start weekly email report scheduler if configured
@@ -90,30 +181,52 @@ func main() {
 			}
 			scheduler, err := report.NewScheduler(reportCfg, deviceEntries, srv.GetBuffer, srv.DeviceInterfaces)
 			if err != nil {
-				log.Fatalf("report scheduler: %v", err)
+				log.Printf("WARNING: report scheduler: %v", err)
+			} else {
+				go scheduler.Run(done)
 			}
-			go scheduler.Run(done)
 		} else {
 			log.Println("report: no devices have owner_email set, skipping report scheduler")
 		}
 	}
+}
 
-	httpSrv := &http.Server{
-		Addr:    cfg.ListenAddr,
-		Handler: srv.Handler(),
-	}
+// watchConfig watches the config file for changes and signals the reload channel.
+// Debounces rapid writes (e.g. editor save-rename patterns) with a 500ms delay.
+func watchConfig(watcher *fsnotify.Watcher, reload chan<- struct{}, shutdown <-chan struct{}) {
+	defer watcher.Close()
 
-	go func() {
-		log.Printf("listening on %s (%d devices)", cfg.ListenAddr, len(cfg.Devices))
-		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("http: %v", err)
+	var debounce *time.Timer
+
+	for {
+		select {
+		case <-shutdown:
+			if debounce != nil {
+				debounce.Stop()
+			}
+			return
+
+		case event, ok := <-watcher.Events:
+			if !ok {
+				return
+			}
+			if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) {
+				if debounce != nil {
+					debounce.Stop()
+				}
+				debounce = time.AfterFunc(500*time.Millisecond, func() {
+					select {
+					case reload <- struct{}{}:
+					default:
+					}
+				})
+			}
+
+		case err, ok := <-watcher.Errors:
+			if !ok {
+				return
+			}
+			log.Printf("config watcher error: %v", err)
 		}
-	}()
-
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-	<-sig
-	log.Println("shutting down")
-	close(done)
-	httpSrv.Close()
+	}
 }
